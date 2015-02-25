@@ -24,7 +24,7 @@
 
     // TODO: Do not hardcode WS URL.
 
-    var sock = new SockJS('http://10.252.28.228:30043/socket');
+    var sock = new SockJS('http://localhost:30043/socket');
 
     sock.sendMessage = function(name, data) {
         sock.send(JSON.stringify({
@@ -46,18 +46,31 @@
         console.log('WS connected');
     };
 
-    sock.onmessage = function(e) {
+    var listener = {}
+    function on(type, handler) {
+        listener[type] = handler;
+    }
+
+    sock.onmessage = function (e) {
         console.log('WS message:', e.data);
         var data = JSON.parse(e.data);
-        if (data.n === 'init') {
-            sock.sendMessage('register.gamepad', player);
+        var handler = listener[data.n];
+        if (handler) {
+            handler.call(this, data.d);
         }
-        if (data.n === 'gamepad.color') {
-            color = data.d;
-            moveStick.redraw();
-            aimStick.redraw();
-          }
     };
+
+    on('init', function (data) {
+        sock.sendMessage('register.gamepad', player);
+        setupPeerConnection();
+    });
+
+    on('gamepad.color', function (data) {
+        color = data;
+        moveStick.redraw();
+        aimStick.redraw();
+    });
+
 
     sock.onclose = function() {
         console.log('WS close');
@@ -119,7 +132,7 @@
 
         function handle(e) {
             e.preventDefault();
-            tryFullScreen();
+            setupScreen();
             var x, y;
             if (e.targetTouches) {
                 for (var i = 0; i < e.targetTouches.length; i++) {
@@ -141,8 +154,8 @@
                 return;
             }
             if (dx * dx > 10 || dy * dy > 10) {
-                dx = (dx * .7) | 0;
-                dy = (dy * .7) | 0;
+                dx = (dx * 0.7) | 0;
+                dy = (dy * 0.7) | 0;
                 setTimeout(terp, 20);
             } else {
                 dx = 0;
@@ -172,14 +185,16 @@
             var h = Math.sqrt(dy * dy + dx * dx);
             var a = Math.atan2(dy ,dx);
 
+            var x, y;
+
             var l = Math.min(h, size);
 
             ctx.clearRect(-cx, -cy, el.width, el.height);
             for (var i = 0; i <= n; i++) {
                 var rad = (1.2 - i / n) * size;
                 var r2 = i / n * l;
-                var x = -Math.cos(a) * r2;
-                var y = -Math.sin(a) * r2;
+                x = -Math.cos(a) * r2;
+                y = -Math.sin(a) * r2;
                 ctx.beginPath();
                 ctx.save();
                 ctx.translate(x, y);
@@ -193,8 +208,8 @@
                 ctx.restore();
             }
 
-            var x = l * Math.cos(a) / size;
-            var y = l * Math.sin(a) / size;
+            x = l * Math.cos(a) / size;
+            y = l * Math.sin(a) / size;
 
             if ('onchange' in self) {
                 self.onchange(x, y);
@@ -225,26 +240,69 @@
     };
 
     function sendUpdate() {
-        sendData('gamepad', state);
+        if (peer) {
+            peer.send({
+                type: 'gamepad',
+                data: state
+            });
+        } else {
+            sendData('gamepad', state);
+        }
     }
 
     function launchIntoFullscreen(element) {
-      if(element.requestFullscreen) {
-        element.requestFullscreen();
-      } else if(element.mozRequestFullScreen) {
-        element.mozRequestFullScreen();
-      } else if(element.webkitRequestFullscreen) {
-        element.webkitRequestFullscreen();
-      } else if(element.msRequestFullscreen) {
-        element.msRequestFullscreen();
-      }
+        if (element.requestFullscreen) {
+            element.requestFullscreen();
+        } else if (element.mozRequestFullScreen) {
+            element.mozRequestFullScreen();
+        } else if (element.webkitRequestFullscreen) {
+            element.webkitRequestFullscreen();
+        } else if (element.msRequestFullscreen) {
+            element.msRequestFullscreen();
+        }
     }
 
-    function tryFullScreen() {
-      var isFull = document.fullscreenEnabled || document.mozFullScreenEnabled || document.webkitFullscreenEnabled;
-      if (!isFull) {
-        launchIntoFullscreen(document.documentElement);
-      }
+    function setupScreen() {
+        launchIntoFullscreen(document.body);
+    }
+
+    var peer;
+
+    function setupPeerConnection(cb) {
+
+        sendData('rtc.peer', {
+            player: player
+        });
+
+        on('rtc.peer', function (data) {
+            data = data || {};
+
+            peer = new SimplePeer({
+                initiator: !!data.initiator,
+            });
+
+            peer.on('error', function (err) {
+                console.error('peer error', err.stack || err.message || err);
+            });
+
+            peer.on('ready', function () {
+                console.log('peer connected!');
+                cb(peer);
+            });
+
+            peer.on('signal', function (data) {
+                sendData('rtc.signal', data);
+            });
+
+            peer.on('close', function () {
+                sendData('rtc.close');
+                peer = null;
+            });
+        });
+
+        on('rtc.signal', function (data) {
+            peer.signal(data);
+        });
     }
 
 })();
