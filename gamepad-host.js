@@ -305,7 +305,9 @@
             });
 
             peer.on('close', function () {
-                sendData('rtc.close');
+                sendData('rtc.close', {
+                    player: player
+                });
                 peer = null;
             });
         });
